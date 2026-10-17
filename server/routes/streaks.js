@@ -203,10 +203,12 @@ async function relationshipResponse(user, relationships) {
   return { userId: user.userId, currentStreak: user.currentStreak, lastResultDate: user.lastResultDate, relationships: serialized, buddy: serialized[0] || null }
 }
 
-async function streakResponse(user, relationships, extra = {}) {
-  await expirePendingAchievements(user.userId)
+async function streakResponse(user, relationships, extra = {}, currentDate) {
+  const effectiveCurrentDate = currentDate || dateInput(new Date())
+  await expirePendingAchievements(user.userId, effectiveCurrentDate)
   await normalizeLegacySharedAchievements(user, relationships)
-  const achievements = await Achievement.find({ userId: user.userId, status: 'pending' }).sort({ createdAt: 1 }).lean()
+  const achievements = (await Achievement.find({ userId: user.userId, status: 'pending' }).sort({ createdAt: 1 }).lean())
+    .filter(achievement => achievement.earnedDate === addDays(effectiveCurrentDate, -1))
   return { ...(await relationshipResponse(user, relationships)), achievements, ...extra }
 }
 
@@ -245,7 +247,7 @@ router.get('/', async (req, res, next) => {
     const user = await User.findOne({ userId })
     if (!user) return res.status(404).json({ message: 'User not found' })
     const relationships = await SavingsBuddy.find({ userIds: userId }).sort({ createdAt: 1 })
-    res.json(await streakResponse(user, relationships))
+    res.json(await streakResponse(user, relationships, {}, req.query.activeDay || undefined))
   } catch (error) {
     next(error)
   }
@@ -361,7 +363,7 @@ router.post('/complete', async (req, res, next) => {
     }
 
     const personal = { success: finalizedSuccess, currentStreak: user.currentStreak, brokenBeforeFinalize }
-    res.json(await streakResponse(user, relationships, { personal, sharedResults }))
+    res.json(await streakResponse(user, relationships, { personal, sharedResults }, req.body.activeDay || undefined))
   } catch (error) {
     next(error)
   }

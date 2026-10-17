@@ -10,8 +10,14 @@ import communityRoutes from './routes/community.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 3000
+const HOST = '0.0.0.0'
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  process.env.FRONTEND_URL,
+].filter(Boolean)
 
-app.use(cors())
+app.use(cors({ origin: allowedOrigins }))
 app.use(express.json())
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }))
@@ -33,8 +39,8 @@ app.use((error, req, res, next) => {
 
 try {
   await connectDatabase()
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`)
+  app.listen(PORT, HOST, () => {
+    console.log(`CashLing API listening on port ${PORT}`)
   })
 } catch (error) {
   console.error(`Unable to start server: ${error.message}`)

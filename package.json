@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview", "server": "node server/index.js", "server:watch": "node --watch server/index.js", "seed": "node server/seed.js" },
+  "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview", "server": "node server/index.js", "start": "node server/index.js", "server:watch": "node --watch server/index.js", "seed": "node server/seed.js" },
   "dependencies": { "@vitejs/plugin-vue": "latest", "cors": "latest", "dotenv": "latest", "express": "latest", "mongoose": "latest", "vite": "latest", "vue": "latest" },
   "devDependencies": {}
 }

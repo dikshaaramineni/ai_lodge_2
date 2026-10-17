@@ -7,10 +7,12 @@ const ACTIVE_USER_STORAGE_KEY = 'cashling-active-user'
 const STORAGE_KEY = 'cashling-mvp-state-v3'
 const PREVIOUS_STORAGE_KEY = 'cashling-mvp-state-v2'
 const LEGACY_STORAGE_KEYS = ['cashling-mvp-state']
-const TRANSACTIONS_API_URL = 'http://localhost:3000/api/transactions'
-const BUDGET_API_URL = 'http://localhost:3000/api/budget'
-const STREAKS_API_URL = 'http://localhost:3000/api/streaks'
-const COMMUNITY_API_URL = 'http://localhost:3000/api/community'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+console.log('[CashLing] API base:', API_BASE_URL)
+const TRANSACTIONS_API_URL = `${API_BASE_URL}/api/transactions`
+const BUDGET_API_URL = `${API_BASE_URL}/api/budget`
+const STREAKS_API_URL = `${API_BASE_URL}/api/streaks`
+const COMMUNITY_API_URL = `${API_BASE_URL}/api/community`
 const ACHIEVEMENTS_API_URL = `${STREAKS_API_URL}/achievements`
 const profiles = [
   { userId: 'user_alex', name: 'Alex', initials: 'A', description: 'new user', detail: 'little/no transaction history', fresh: true },
@@ -248,15 +250,15 @@ const App = {
         const previousByCategory = previous.reduce((groups, item) => { groups[item.category] = (groups[item.category] || 0) + item.amount; return groups }, {})
         Object.entries(currentByCategory).forEach(([category, total]) => {
           const prior = previousByCategory[category]
-          if (prior > 0 && total < prior * 0.9) achievements.push({ key: `history-category-${category}-${start}`, text: `${category} spending decreased ${Math.round((prior - total) / prior * 100)}% compared with the previous period.` })
+          if (prior > 0 && total < prior * 0.9) achievements.push({ key: `history-category-${category}-${start}`, earnedDate: end, text: `${category} spending decreased ${Math.round((prior - total) / prior * 100)}% compared with the previous period.` })
         })
         const weekendTotal = items => items.filter(item => [0, 6].includes(localDate(item.date).getDay())).reduce((sum, item) => sum + item.amount, 0)
         const previousWeekend = weekendTotal(previous)
         const currentWeekend = weekendTotal(current)
-        if (previousWeekend > 0 && currentWeekend < previousWeekend * 0.9) achievements.push({ key: `history-weekend-${start}`, text: `Weekend spending improved ${Math.round((previousWeekend - currentWeekend) / previousWeekend * 100)}% compared with the previous period.` })
+        if (previousWeekend > 0 && currentWeekend < previousWeekend * 0.9) achievements.push({ key: `history-weekend-${start}`, earnedDate: end, text: `Weekend spending improved ${Math.round((previousWeekend - currentWeekend) / previousWeekend * 100)}% compared with the previous period.` })
         const currentSmall = current.filter(item => item.amount < 10).length
         const previousSmall = previous.filter(item => item.amount < 10).length
-        if (currentSmall < previousSmall) achievements.push({ key: `history-small-purchases-${start}`, text: 'You made fewer small purchases than the previous period.' })
+        if (currentSmall < previousSmall) achievements.push({ key: `history-small-purchases-${start}`, earnedDate: end, text: 'You made fewer small purchases than the previous period.' })
         return achievements
       })
     const mostFrequentCategory = computed(() => [...weekCategoryTotals.value].sort((a, b) => b.count - a.count)[0] || null)
@@ -293,16 +295,21 @@ const App = {
        const allCommunityFeed = computed(() => communityPosts.value.map(post => ({ ...post, icon: '✦' })))
        const communityFeed = computed(() => communityFeedExpanded.value ? allCommunityFeed.value : allCommunityFeed.value.slice(0, 5))
        const communityFeedHasMore = computed(() => allCommunityFeed.value.length > 5)
-       const positiveInsightCards = computed(() => insightsCards.value.filter(card => card.label === 'CHANGE OVER TIME' && /decreased/i.test(card.title)))
-       const positiveInsightCandidate = computed(() => positiveInsightCards.value[0] || null)
-       const shareableAchievements = computed(() => {
-         const achievements = [
-           ...pendingAchievements.value.map(achievement => ({ key: achievement.key, text: achievement.text, id: achievement._id })),
-           ...positiveInsightCards.value.map(card => ({ key: `insight-${card.title}`, text: card.title })),
-          ...historicalAchievements.value,
-        ]
+        const positiveInsightCards = computed(() => insightsCards.value.filter(card => card.label === 'CHANGE OVER TIME' && /decreased/i.test(card.title)))
+        const positiveInsightCandidate = computed(() => positiveInsightCards.value[0] || null)
+        const isShareableOnActiveDay = achievement => {
+          if (!achievement?.earnedDate) return true
+          return activeDay.value === addDays(achievement.earnedDate, 1)
+        }
+        const shareableAchievements = computed(() => {
+          const achievements = [
+            ...pendingAchievements.value.map(achievement => ({ key: achievement.key, text: achievement.text, id: achievement._id, earnedDate: achievement.earnedDate })),
+            ...positiveInsightCards.value.map(card => ({ key: `insight-${card.title}-${insightPeriod.value.end}`, text: card.title, earnedDate: insightPeriod.value.end })),
+           ...historicalAchievements.value,
+         ]
        const seen = new Set()
-       return achievements.filter(achievement => {
+          return achievements.filter(achievement => {
+          if (!isShareableOnActiveDay(achievement)) return false
          if (seen.has(achievement.key)) return false
          seen.add(achievement.key)
          return true
@@ -336,7 +343,7 @@ const App = {
       async function loadStreaks(userId = activeUserId.value) {
         console.log('[NOTIFICATIONS LOAD START]', userId)
        try {
-         const response = await fetch(`${STREAKS_API_URL}?userId=${encodeURIComponent(userId)}`)
+          const response = await fetch(`${STREAKS_API_URL}?userId=${encodeURIComponent(userId)}&activeDay=${encodeURIComponent(activeDay.value)}`)
          console.log('STREAK B response', response.status)
          if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
          const data = await response.json()
@@ -356,7 +363,7 @@ const App = {
          const response = await fetch(`${STREAKS_API_URL}/complete`, {
            method: 'POST',
            headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ userId: activeUserId.value, date: sharedDate, personalDate, success }),
+            body: JSON.stringify({ userId: activeUserId.value, date: sharedDate, personalDate, activeDay: activeDay.value, success }),
          })
          if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
          const data = await response.json()
