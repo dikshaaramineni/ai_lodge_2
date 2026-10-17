@@ -17,7 +17,23 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
 ].filter(Boolean)
 
-app.use(cors({ origin: allowedOrigins }))
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    const isCashLingVercelPreview =
+      origin.startsWith('https://ai-lodge-') &&
+      origin.endsWith('.vercel.app')
+
+    if (isCashLingVercelPreview) {
+      return callback(null, true)
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`))
+  },
+}))
 app.use(express.json())
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }))
