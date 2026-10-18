@@ -72,43 +72,6 @@ async function getDailyState(userId, date, user, relationships) {
 
 function sharedLossMessage(name) { return `Your shared streak with ${name || 'your buddy'} ended.` }
 
-async function syncPendingMilestoneAchievements(user, relationships, state, date, names) {
-  if (state.dayFinalized) return
-  const statuses = { $in: ['pending', 'revoked'] }
-  const personalMilestone = state.streakAtStartOfDay + 1
-  const personalAchievement = await Achievement.findOne({
-    userId: user.userId,
-    key: `personal-streak-${personalMilestone}`,
-    earnedDate: date,
-    status: statuses,
-  })
-  if (personalAchievement) {
-    personalAchievement.status = state.todayStreakBroken ? 'revoked' : 'pending'
-    await personalAchievement.save()
-  }
-
-  for (const relationship of relationships.filter(item => item.status !== 'pending')) {
-    const snapshot = state.sharedSnapshots.find(item => String(item.relationshipId) === String(relationship._id))
-    if (!snapshot || snapshot.status !== 'active') continue
-    const buddyUserId = relationship.userIds.find(id => id !== user.userId)
-    const milestone = snapshot.sharedStreak + 1
-    const key = `shared-streak-${pairKey(relationship.userIds)}-${milestone}`
-    const valid = !state.todayStreakBroken && relationship.status === 'active' && relationship.sharedStreak === snapshot.sharedStreak
-    const achievements = await Achievement.find({
-      userId: { $in: relationship.userIds },
-      key,
-      earnedDate: date,
-      status: statuses,
-    })
-    await Promise.all(achievements.map(achievement => {
-      achievement.status = valid ? 'pending' : 'revoked'
-      achievement.buddyUserId = buddyUserId
-      achievement.text = `You and ${names.get(buddyUserId) || 'your buddy'} reached a ${milestone}-day shared streak 🔥`
-      return achievement.save()
-    }))
-  }
-}
-
 router.post('/evaluate', async (req, res, next) => {
   try {
     const userId = requestUserId(req, res)
@@ -197,7 +160,6 @@ router.post('/evaluate', async (req, res, next) => {
       await user.save()
       await state.save()
     }
-    await syncPendingMilestoneAchievements(user, relationships, state, date, names)
     result.currentStreak = user.currentStreak
     res.json({ ok: true, userId, todaySpending, dailySafeLimit, financialStatus, ...result, todayStreakBroken: state.todayStreakBroken, restored: result.personalRestored, sharedStreaks: relationships.map(item => ({ buddyUserId: item.userIds.find(id => id !== userId), sharedStreak: item.sharedStreak, status: item.status })), notifications })
   } catch (error) { next(error) }
@@ -366,21 +328,37 @@ router.post('/complete', async (req, res, next) => {
           relationship.status = 'active'
           relationship.dailyCompletions = relationship.dailyCompletions.filter(item => item.date !== date)
           outcome = 'success'
-          if (relationship.sharedStreak % 5 === 0) {
-            await Promise.all(relationship.userIds.map(sharedUserId => Achievement.updateOne(
-              { userId: sharedUserId, key: `shared-streak-${pairKey(relationship.userIds)}-${relationship.sharedStreak}` },
-              { $setOnInsert: {
-                userId: sharedUserId,
-                key: `shared-streak-${pairKey(relationship.userIds)}-${relationship.sharedStreak}`,
-                type: 'shared-streak',
-                buddyUserId: sharedUserId === userId ? buddyUserId : userId,
-                milestone: relationship.sharedStreak,
-                earnedDate: date,
-                 text: `You and ${names.get(sharedUserId === userId ? buddyUserId : userId) || 'your buddy'} reached a ${relationship.sharedStreak}-day shared streak 🔥`,
-              } },
-              { upsert: true },
-            )))
-          }
+           if (relationship.sharedStreak % 5 === 0) {
+             console.log('[SHARED MILESTONE CHECK]', {
+               userIds: relationship.userIds,
+               previousSharedStreak: previousStreak,
+               newSharedStreak: relationship.sharedStreak,
+               resultDate: date,
+               dayFinalized: dayState.dayFinalized,
+             })
+             const achievements = await Promise.all(relationship.userIds.map(sharedUserId => Achievement.findOneAndUpdate(
+               { userId: sharedUserId, key: `shared-streak-${pairKey(relationship.userIds)}-${relationship.sharedStreak}` },
+               { $setOnInsert: {
+                 userId: sharedUserId,
+                 key: `shared-streak-${pairKey(relationship.userIds)}-${relationship.sharedStreak}`,
+                 type: 'shared-streak',
+                 buddyUserId: sharedUserId === userId ? buddyUserId : userId,
+                 milestone: relationship.sharedStreak,
+                 earnedDate: date,
+                  text: `You and ${names.get(sharedUserId === userId ? buddyUserId : userId) || 'your buddy'} reached a ${relationship.sharedStreak}-day shared streak 🔥`,
+               } },
+               { upsert: true, new: true, setDefaultsOnInsert: true },
+             )))
+              achievements.forEach(achievement => console.log('[SHARED MILESTONE CREATED]', {
+                achievementId: achievement._id,
+                userId: achievement.userId,
+                buddyUserId: achievement.buddyUserId,
+                milestone: achievement.milestone,
+                status: achievement.status,
+                earnedDate: achievement.earnedDate,
+                createdAt: achievement.createdAt,
+              }))
+           }
           const milestone = relationship.sharedStreak % 5 === 0
           const notificationKey = `shared-streak-${milestone ? 'milestone' : 'increment'}-${pairKey(relationship.userIds)}-${date}`
           await Promise.all(relationship.userIds.map(sharedUserId => saveSharedNotification({

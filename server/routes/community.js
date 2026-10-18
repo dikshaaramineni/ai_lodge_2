@@ -70,7 +70,7 @@ router.post('/posts', async (req, res, next) => {
     if (sourceAchievementId) {
       achievement = await Achievement.findOne({ _id: sourceAchievementId, userId })
       if (!achievement) return res.status(404).json({ message: 'Achievement not found' })
-      if (['private', 'expired', 'revoked'].includes(achievement.status)) return res.status(409).json({ message: 'Achievement is not shareable' })
+      if (['private', 'expired'].includes(achievement.status)) return res.status(409).json({ message: 'Achievement is not shareable' })
       const existingPost = await CommunityPost.findOne({ sourceAchievementId })
       if (existingPost) {
         if (achievement.status === 'pending') {
