@@ -48,13 +48,15 @@ function loadState(userId) {
         cleanSaved.progress = { ...cleanSaved.progress, allowanceDate: '', allowancePeriod: '', dailyAllowance: null }
         console.info('[CashLing] migrated legacy allowance state', { userId })
       }
-      return {
+      const restoredState = {
         ...base, ...cleanSaved,
         budget: { ...base.budget, ...cleanSaved.budget },
         progress: { ...base.progress, dailyRecords: saved.progress?.dailyRecords || [], weeklyPointsAwarded: saved.progress?.weeklyPointsAwarded || [], allowanceDate: saved.progress?.allowanceDate || '', allowancePeriod: saved.progress?.allowancePeriod || '', dailyAllowance: saved.progress?.dailyAllowance ?? null, currentStreak: saved.progress?.currentStreak ?? 0, lastResultDate: saved.progress?.lastResultDate || '' },
          community: { ...base.community, ...cleanCommunity, friends: saved.community?.friends || [], shareDecisions: saved.community?.shareDecisions || {}, incomingNudge: saved.community?.incomingNudge || false, availableWin: '' },
         demo: { ...base.demo, ...saved.demo },
       }
+      console.log('[ACTIVE DAY RESTORED]', restoredState.progress.allowanceDate)
+      return restoredState
     }
   } catch { /* Recover gracefully from older or malformed localStorage. */ }
   return initialState()
@@ -299,25 +301,49 @@ const App = {
        const communityFeedHasMore = computed(() => allCommunityFeed.value.length > 5)
         const positiveInsightCards = computed(() => insightsCards.value.filter(card => card.label === 'CHANGE OVER TIME' && /decreased/i.test(card.title)))
         const positiveInsightCandidate = computed(() => positiveInsightCards.value[0] || null)
-        const isShareableOnActiveDay = achievement => {
-          if (!achievement?.earnedDate) return true
-          return activeDay.value === addDays(achievement.earnedDate, 1)
+         const isShareableOnActiveDay = achievement => {
+           if (!achievement?.earnedDate) return true
+           return activeDay.value === addDays(achievement.earnedDate, 1)
         }
-        const shareableAchievements = computed(() => {
-          const achievements = [
-            ...pendingAchievements.value.map(achievement => ({ key: achievement.key, text: achievement.text, id: achievement._id, earnedDate: achievement.earnedDate })),
+         const shareableAchievements = computed(() => {
+           const achievements = [
+             ...pendingAchievements.value.map(achievement => ({ key: achievement.key, text: achievement.text, id: achievement._id, type: achievement.type, status: achievement.status, earnedDate: achievement.earnedDate, milestone: achievement.milestone, buddyUserId: achievement.buddyUserId })),
             ...positiveInsightCards.value.map(card => ({ key: `insight-${card.title}-${insightPeriod.value.end}`, text: card.title, earnedDate: insightPeriod.value.end })),
-           ...historicalAchievements.value,
-         ]
-       const seen = new Set()
-          return achievements.filter(achievement => {
-          if (!isShareableOnActiveDay(achievement)) return false
-         if (seen.has(achievement.key)) return false
-         seen.add(achievement.key)
-         return true
-       })
-     })
-       const shareableWin = computed(() => shareableAchievements.value.find(achievement => achievement.id || !state.community.shareDecisions[achievement.key])?.text || null)
+            ...historicalAchievements.value,
+          ]
+        const seen = new Set()
+        const eligibility = achievements.map(achievement => {
+          const dateEligible = isShareableOnActiveDay(achievement)
+          const duplicate = seen.has(achievement.key)
+          const decisionEligible = Boolean(achievement.id || !state.community.shareDecisions[achievement.key])
+          const accepted = dateEligible && !duplicate
+          if (!duplicate) seen.add(achievement.key)
+          return {
+            candidate: achievement,
+            accepted,
+            reason: !dateEligible ? 'active day is not earned date + 1' : duplicate ? 'duplicate candidate key' : !decisionEligible ? 'eligible candidate, but already decided' : 'eligible',
+          }
+        })
+        console.log('[WIN ELIGIBILITY]', {
+          activeDay: activeDay.value,
+          candidates: eligibility.map(item => ({
+            id: item.candidate.id,
+            type: item.candidate.type,
+            earnedDate: item.candidate.earnedDate,
+            accepted: item.accepted,
+            reason: item.reason,
+          })),
+        })
+        return eligibility.filter(item => item.accepted).map(item => item.candidate)
+      })
+        const shareableWin = computed(() => {
+          const candidates = shareableAchievements.value
+          console.log('[WIN ELIGIBILITY]', {
+            activeDay: activeDay.value,
+            candidates: candidates.map(achievement => ({ id: achievement.id, type: achievement.type, status: achievement.status, earnedDate: achievement.earnedDate, accepted: true, reason: 'eligible candidate' })),
+          })
+          return candidates.find(achievement => achievement.id || !state.community.shareDecisions[achievement.key])?.text || null
+        })
        watch(pendingAchievements, value => console.log('[WIN] pending achievements', value), { deep: true, immediate: true })
        watch(positiveInsightCandidate, value => console.log('[WIN] positive insight candidate', value), { deep: true, immediate: true })
        watch(() => shareableWin.value, value => console.log('[WIN] final shareableWin', value), { immediate: true })
@@ -345,24 +371,46 @@ const App = {
       async function loadStreaks(userId = activeUserId.value) {
         console.log('[NOTIFICATIONS LOAD START]', userId)
        try {
-          const response = await fetch(`${STREAKS_API_URL}?userId=${encodeURIComponent(userId)}&activeDay=${encodeURIComponent(activeDay.value)}`)
+           const requestUrl = `${STREAKS_API_URL}?userId=${encodeURIComponent(userId)}&activeDay=${encodeURIComponent(activeDay.value)}`
+           console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
+           console.log('[STREAK REQUEST URL]', requestUrl)
+            const response = await fetch(requestUrl)
          console.log('STREAK B response', response.status)
          if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
-         const data = await response.json()
-         console.log('STREAK C data', data)
-         if (userId === activeUserId.value) {
-             streakData.value = data
-             pendingAchievements.value = data.achievements || []
-              state.progress.currentStreak = data.currentStreak
-             state.progress.lastResultDate = data.lastResultDate
+           const data = await response.json()
+           console.log('STREAK C data', data)
+           console.log('[RAW STREAK ACHIEVEMENTS]', data.achievements)
+           console.log('[WIN DEBUG]', {
+             activeDay: activeDay.value,
+             pendingAchievements: (data.achievements || []).map(achievement => ({
+               id: achievement._id,
+               type: achievement.type,
+               status: achievement.status,
+               earnedDate: achievement.earnedDate,
+               milestone: achievement.milestone,
+               buddyUserId: achievement.buddyUserId,
+             })),
+           })
+          if (userId === activeUserId.value) {
+              streakData.value = data
+              pendingAchievements.value = data.achievements || []
+              console.log('[PENDING ACHIEVEMENTS ASSIGNED]', pendingAchievements.value)
+              console.log('[WIN TRACE]', {
+                activeUserId: activeUserId.value,
+                activeDay: activeDay.value,
+                pendingAchievements: pendingAchievements.value,
+              })
+               state.progress.currentStreak = data.currentStreak
+              state.progress.lastResultDate = data.lastResultDate
           }
        } catch (error) {
          console.error('Streak GET request failed:', error)
        }
      }
         async function completeStreakDay(personalDate, success, sharedDate = personalDate) {
-       try {
-         const response = await fetch(`${STREAKS_API_URL}/complete`, {
+        try {
+          console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
+          const response = await fetch(`${STREAKS_API_URL}/complete`, {
            method: 'POST',
            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: activeUserId.value, date: sharedDate, personalDate, activeDay: activeDay.value, success }),
@@ -387,9 +435,10 @@ const App = {
           return null
         }
         }
-        async function evaluateTodayStreak() {
-          if (!state.budget.configured || !activeUserId.value) return null
-           const response = await fetch(`${STREAKS_API_URL}/evaluate`, {
+         async function evaluateTodayStreak() {
+           if (!state.budget.configured || !activeUserId.value) return null
+            console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
+            const response = await fetch(`${STREAKS_API_URL}/evaluate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -582,9 +631,10 @@ const App = {
       }
       function openProfileSelector() { showProfileSelector.value = true }
        async function loadStreakNotifications(userId = activeUserId.value) {
-         console.log('[NOTIFICATIONS LOAD START]', userId)
-         try {
-           const response = await fetch(`${STREAKS_API_URL}/notifications?userId=${encodeURIComponent(userId)}`)
+          console.log('[NOTIFICATIONS LOAD START]', userId)
+          try {
+            console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
+            const response = await fetch(`${STREAKS_API_URL}/notifications?userId=${encodeURIComponent(userId)}`)
            if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
            const notifications = await response.json()
             console.log('[NOTIFICATIONS FETCHED]', notifications)
@@ -601,9 +651,10 @@ const App = {
            console.error('Streak notifications GET request failed:', error)
          }
        }
-        async function markNotificationSeen(notificationId) {
-          try {
-            const response = await fetch(`${STREAKS_API_URL}/notifications/${encodeURIComponent(notificationId)}/seen?userId=${encodeURIComponent(activeUserId.value)}`, { method: 'PATCH' })
+         async function markNotificationSeen(notificationId) {
+           try {
+             console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
+             const response = await fetch(`${STREAKS_API_URL}/notifications/${encodeURIComponent(notificationId)}/seen?userId=${encodeURIComponent(activeUserId.value)}`, { method: 'PATCH' })
             if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
             console.log('[NOTIFICATION MARKED SEEN]', notificationId)
             return true
@@ -672,21 +723,31 @@ const App = {
       state.progress.dailyRecords.push({ date, totalSpent: Number(totalSpent), safeLimit: Math.max(0, allowance), status: success ? 'success' : 'overspent' })
       return { date, success }
     }
-     async function endDay() {
-      if (!state.budget.configured) return
-      ensureDailyAllowance()
-      const endedDay = activeDay.value
+      async function endDay() {
+       if (!state.budget.configured) return
+        ensureDailyAllowance()
+        const beforeActiveDay = activeDay.value
+        const endedDay = activeDay.value
+        console.log('[ACTIVE DAY BEFORE END]', beforeActiveDay)
+        console.log('[ENDED DAY]', endedDay)
       const safeLimit = budgetMetrics.value.safeToday
       const totalSpent = budgetMetrics.value.todaySpending
         const result = { success: totalSpent <= safeLimit && financialStatus.value === 'on-track' }
        console.log('[MILESTONE] current streak before End Day', streakData.value?.currentStreak ?? 0)
        settleDay(endedDay, safeLimit, result.success)
-        const nextDay = addDays(endedDay, 1)
-        state.progress.allowanceDate = nextDay > state.budget.end ? state.budget.end : nextDay
-        state.progress.allowancePeriod = periodKey(state.budget)
-        state.progress.dailyAllowance = null
-       state.progress.dailyAllowance = nextDay > state.budget.end ? 0 : budgetMetrics.value.calculatedDailyAllowance
-         const streakResult = await completeStreakDay(endedDay, result.success, dateInput(new Date()))
+           const streakResult = await completeStreakDay(endedDay, result.success, endedDay)
+           const nextDay = addDays(endedDay, 1)
+           state.progress.allowanceDate = nextDay > state.budget.end ? state.budget.end : nextDay
+           state.progress.allowancePeriod = periodKey(state.budget)
+           state.progress.dailyAllowance = null
+          state.progress.dailyAllowance = nextDay > state.budget.end ? 0 : budgetMetrics.value.calculatedDailyAllowance
+           console.log('[ACTIVE DAY AFTER ADVANCE]', activeDay.value)
+           console.log('[END DAY]', {
+             endedDay,
+             beforeActiveDay,
+             afterActiveDay: activeDay.value,
+           })
+           persist()
           if (streakResult) {
             await loadStreaks(activeUserId.value)
             await loadStreakNotifications(activeUserId.value)
@@ -893,6 +954,7 @@ const App = {
       }
       async function sendStreakRequest(friendUserId, friendName) {
         try {
+          console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
           const response = await fetch(`${STREAKS_API_URL}/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: activeUserId.value, buddyUserId: friendUserId }) })
           if (!response.ok) {
             const error = await response.json().catch(() => ({}))
@@ -906,6 +968,7 @@ const App = {
       }
       async function acceptStreakRequest() {
         try {
+          console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
           const response = await fetch(`${STREAKS_API_URL}/requests/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: activeUserId.value }) })
           if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
           streakData.value = await response.json()
