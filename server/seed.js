@@ -62,9 +62,12 @@ function sarahTransactions() {
   const transactions = []
   const categoryCycle = ['Food & Drink', 'Food & Drink', 'Transport', 'Groceries', 'Other']
   for (let offset = -59; offset <= 0; offset += 1) {
+    const transactionOffset = offset === 0 ? -1 : offset
     const date = new Date(today)
-    date.setDate(date.getDate() + offset)
-    const day = date.getDay()
+    date.setDate(date.getDate() + transactionOffset)
+    const originalDate = new Date(today)
+    originalDate.setDate(originalDate.getDate() + offset)
+    const day = originalDate.getDay()
     const recent = offset >= -29
     const periodFactor = recent ? 0.92 : 1.08
     const category = categoryCycle[(offset + 59) % categoryCycle.length]
@@ -113,7 +116,7 @@ try {
   await Transaction.deleteMany({})
   await User.insertMany(users)
   await FriendRequest.create({ fromUserId: 'user_chloe', toUserId: 'user_sarah', status: 'accepted' })
-  await SavingsBuddy.create({ userIds: ['user_chloe', 'user_sarah'], sharedStreak: 4, status: 'active', invitedBy: 'user_chloe' })
+  await SavingsBuddy.create({ userIds: ['user_chloe', 'user_sarah'], sharedStreak: 4, lastCompletedDate: '', dailyCompletions: [], status: 'active', invitedBy: 'user_chloe' })
   await Budget.insertMany([
     { userId: 'user_chloe', monthlyBudget: 900, protectedSavings: 160, startDate: addDays(-15), endDate: addDays(15), configured: true },
     { userId: 'user_sarah', monthlyBudget: 1200, protectedSavings: 250, startDate: addDays(-15), endDate: addDays(15), configured: true },
