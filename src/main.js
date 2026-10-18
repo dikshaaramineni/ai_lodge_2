@@ -594,9 +594,13 @@ const App = {
           if (!showBudgetModal.value) {
             initializeAllowanceAfterProfileLoad(userId)
             try { await evaluateTodayStreak() } catch (error) { console.error('Initial streak evaluation failed:', error) }
-          }
-          await loadStreakNotifications(userId)
-        })().finally(() => {
+           }
+           await loadStreakNotifications(userId)
+             console.log('[PROFILE DATE CHECK]', {
+               userId: activeUserId.value,
+             activeDay: activeDay.value,
+             })
+         })().finally(() => {
           if (currentProfileLoad === profileLoad) {
             if (profileLoad.controller.signal.aborted) console.log('[PROFILE LOAD ABORT]', userId, profileLoad.loadId)
             else console.log('[PROFILE LOAD COMPLETE]', userId, profileLoad.loadId)
