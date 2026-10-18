@@ -8,6 +8,7 @@ import CommunityPost from './models/CommunityPost.js'
 import FriendRequest from './models/FriendRequest.js'
 import Achievement from './models/Achievement.js'
 import StreakNotification from './models/StreakNotification.js'
+import DailyStreakState from './models/DailyStreakState.js'
 
 const today = new Date()
 const dateInput = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -107,6 +108,7 @@ try {
   await FriendRequest.deleteMany({})
   await Achievement.deleteMany({})
   await StreakNotification.deleteMany({})
+  await DailyStreakState.deleteMany({})
   await Budget.deleteMany({})
   await Transaction.deleteMany({})
   await User.insertMany(users)

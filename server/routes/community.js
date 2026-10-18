@@ -3,6 +3,7 @@ import CommunityPost from '../models/CommunityPost.js'
 import SavingsBuddy from '../models/SavingsBuddy.js'
 import User from '../models/User.js'
 import FriendRequest from '../models/FriendRequest.js'
+import Achievement from '../models/Achievement.js'
 
 const router = express.Router()
 
@@ -16,7 +17,7 @@ function requestUserId(req, res) {
 }
 
 async function connectedUserIds(userId) {
-  const buddies = await SavingsBuddy.find({ userIds: userId }).lean()
+  const buddies = await SavingsBuddy.find({ userIds: userId, status: 'active' }).lean()
   const accepted = await FriendRequest.find({ $or: [{ fromUserId: userId }, { toUserId: userId }], status: 'accepted' }).lean()
   const friends = accepted.flatMap(request => [request.fromUserId, request.toUserId])
   return [...new Set([userId, ...buddies.flatMap(buddy => buddy.userIds), ...friends])]
@@ -61,12 +62,46 @@ router.post('/posts', async (req, res, next) => {
   try {
     const userId = requestUserId(req, res)
     if (!userId) return
-    const { type = 'win', text } = req.body
+    const { type = 'win', text, sourceAchievementId } = req.body
     if (type !== 'win' || typeof text !== 'string' || !text.trim()) return res.status(400).json({ message: 'A win post text is required' })
     const user = await User.findOne({ userId })
     if (!user) return res.status(404).json({ message: 'User not found' })
-    const post = await CommunityPost.create({ userId, type, text: text.trim() })
-    res.status(201).json((await postResponse([post.toObject()]))[0])
+    let achievement = null
+    if (sourceAchievementId) {
+      achievement = await Achievement.findOne({ _id: sourceAchievementId, userId })
+      if (!achievement) return res.status(404).json({ message: 'Achievement not found' })
+      if (['private', 'expired', 'revoked'].includes(achievement.status)) return res.status(409).json({ message: 'Achievement is not shareable' })
+      const existingPost = await CommunityPost.findOne({ sourceAchievementId })
+      if (existingPost) {
+        if (achievement.status === 'pending') {
+          achievement.status = 'shared'
+          await achievement.save()
+        }
+        return res.json((await postResponse([existingPost.toObject()]))[0])
+      }
+    }
+    const postData = { userId, type, text: text.trim() }
+    if (!sourceAchievementId) {
+      const post = await CommunityPost.create(postData)
+      return res.status(201).json((await postResponse([post.toObject()]))[0])
+    }
+    postData.sourceAchievementId = sourceAchievementId
+    let post
+    try {
+      post = await CommunityPost.findOneAndUpdate(
+        sourceAchievementId ? { sourceAchievementId } : { userId, text: text.trim(), type },
+        { $setOnInsert: postData },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+    } catch (error) {
+      if (error?.code !== 11000 || !sourceAchievementId) throw error
+      post = await CommunityPost.findOne({ sourceAchievementId })
+    }
+    if (achievement?.status === 'pending') {
+      achievement.status = 'shared'
+      await achievement.save()
+    }
+    res.json((await postResponse([post.toObject()]))[0])
   } catch (error) {
     next(error)
   }

@@ -92,8 +92,10 @@ const App = {
     const description = ref('')
     const expenseDate = ref(state.progress.allowanceDate || dateInput(new Date()))
     const budgetForm = reactive({ ...state.budget })
-    const activeProfile = computed(() => profiles.find(profile => profile.userId === activeUserId.value) || null)
-    const activeDay = computed(() => state.progress.allowanceDate || dateInput(new Date()))
+     const activeProfile = computed(() => profiles.find(profile => profile.userId === activeUserId.value) || null)
+     const activeDay = computed(() => state.progress.allowanceDate || dateInput(new Date()))
+     let profileLoadSequence = 0
+     let currentProfileLoad = null
 
     const inBudgetPeriod = (date) => date >= state.budget.start && date <= state.budget.end
     const currentPeriodExpenses = computed(() => state.expenses.filter(item => inBudgetPeriod(item.date)))
@@ -434,15 +436,17 @@ const App = {
           if (userId === activeUserId.value) relationshipData.value = { friends: [], incomingRequests: [] }
         }
       }
-         async function loadTransactions(requestedUserId = activeUserId.value) {
+         async function loadTransactions(requestedUserId = activeUserId.value, profileLoad = null) {
          transactionsLoading.value = true
          transactionsError.value = ''
          const requestUrl = `${TRANSACTIONS_API_URL}?userId=${encodeURIComponent(requestedUserId)}`
          console.info('[CashLing] loading transactions', { activeUserId: requestedUserId, requestUrl })
-         const controller = new AbortController()
+          const controller = profileLoad?.controller || new AbortController()
+          const loadId = profileLoad?.loadId ?? null
          const timeoutId = window.setTimeout(() => controller.abort(), 10000)
          try {
-           console.log("A fetch starting", requestedUserId)
+            if (profileLoad) console.log('[TRANSACTION FETCH START]', requestedUserId, loadId)
+            console.log("A fetch starting", requestedUserId)
            const response = await fetch(requestUrl, { signal: controller.signal })
            console.log("B response received", response.status)
            if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
@@ -451,9 +455,9 @@ const App = {
            if (!Array.isArray(data)) throw new Error('The transactions response was not a list')
            console.log("D requested user", requestedUserId)
            console.log("E current active user", activeUserId.value)
-           if (requestedUserId !== activeUserId.value) {
+            if (requestedUserId !== activeUserId.value || (profileLoad && currentProfileLoad !== profileLoad)) {
              console.warn('[CashLing] stale transactions response skipped', { requestedUserId, activeUserId: activeUserId.value })
-             return
+               return { aborted: true }
            }
            console.log("F assigning transactions")
            apiTransactions.value = data
@@ -462,33 +466,37 @@ const App = {
            console.info('[CashLing] transactions loaded', { activeUserId: requestedUserId, count: data.length })
            persist()
           } catch (error) {
-            if (requestedUserId !== activeUserId.value) {
+            if (requestedUserId !== activeUserId.value || (profileLoad && currentProfileLoad !== profileLoad)) {
               console.warn('[CashLing] stale transaction error skipped', { requestedUserId, activeUserId: activeUserId.value })
-              return
+               return { aborted: true }
             }
-           transactionsError.value = 'Unable to load transactions from the server.'
-          console.error('Transaction API request failed:', error)
+            if (error.name === 'AbortError' && profileLoad) return { aborted: true }
+            transactionsError.value = 'Unable to load transactions from the server.'
+           console.error('Transaction API request failed:', error)
+           return { aborted: false }
          } finally {
            window.clearTimeout(timeoutId)
            console.log("H before finally", transactionsLoading.value)
-           transactionsLoading.value = false
+            if (requestedUserId === activeUserId.value && (!profileLoad || currentProfileLoad === profileLoad)) transactionsLoading.value = false
            console.log("I after finally", transactionsLoading.value)
         }
         }
-        async function loadBudget(userId = activeUserId.value) {
+         async function loadBudget(userId = activeUserId.value, profileLoad = null) {
          budgetError.value = ''
          const requestUrl = `${BUDGET_API_URL}?userId=${encodeURIComponent(userId)}`
          console.info('[CashLing] loading budget', { activeUserId: userId, requestUrl })
-          const controller = new AbortController()
+          const controller = profileLoad?.controller || new AbortController()
+          const loadId = profileLoad?.loadId ?? null
           const timeoutId = window.setTimeout(() => controller.abort(), 10000)
           try {
-            console.log("START fetch budget", requestUrl)
+             if (profileLoad) console.log('[BUDGET FETCH START]', userId, loadId)
+             console.log("START fetch budget", requestUrl)
             const response = await fetch(requestUrl, { signal: controller.signal })
             console.log("RESPONSE received", response.status)
            if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
            const budget = await response.json()
-           if (userId !== activeUserId.value) return
-           if (!budget) return
+            if (userId !== activeUserId.value || (profileLoad && currentProfileLoad !== profileLoad)) return { aborted: true }
+            if (!budget) return { aborted: false }
            state.budget = {
             monthly: Number(budget.monthlyBudget),
             savings: Number(budget.protectedSavings),
@@ -498,17 +506,59 @@ const App = {
            }
            console.info('[CashLing] budget loaded', { activeUserId: userId, configured: state.budget.configured })
            Object.assign(budgetForm, state.budget)
-           persist()
-         } catch (error) {
-           budgetError.value = 'Unable to load budget from the server.'
-           console.error('Budget GET request failed:', error)
+            persist()
+            return { aborted: false }
+          } catch (error) {
+            if ((error.name === 'AbortError' && profileLoad) || (profileLoad && currentProfileLoad !== profileLoad)) return { aborted: true }
+            if (userId !== activeUserId.value) return { aborted: true }
+            budgetError.value = 'Unable to load budget from the server.'
+            console.error('Budget GET request failed:', error)
+            return { aborted: false }
           } finally {
             window.clearTimeout(timeoutId)
           }
         }
-      async function selectProfile(userId) {
-       const profile = profiles.find(item => item.userId === userId)
-       if (!profile) return
+       function isCurrentProfileLoad(profileLoad) {
+        return currentProfileLoad === profileLoad && activeUserId.value === profileLoad.userId && !profileLoad.controller.signal.aborted
+       }
+       function loadProfile(userId) {
+        if (currentProfileLoad?.userId === userId && !currentProfileLoad.controller.signal.aborted) return currentProfileLoad.promise
+        if (currentProfileLoad && !currentProfileLoad.controller.signal.aborted) {
+          console.log('[PROFILE LOAD ABORT]', currentProfileLoad.userId, currentProfileLoad.loadId)
+          currentProfileLoad.controller.abort()
+        }
+        const profileLoad = { userId, loadId: ++profileLoadSequence, controller: new AbortController(), promise: null }
+        currentProfileLoad = profileLoad
+        console.log('[PROFILE LOAD START]', userId, profileLoad.loadId)
+        profileLoad.promise = (async () => {
+          const [budgetResult, transactionResult] = await Promise.all([
+            loadBudget(userId, profileLoad),
+            loadTransactions(userId, profileLoad),
+            loadStreaks(userId),
+            loadCommunityPosts(userId),
+            loadRelationships(userId),
+          ])
+          if (!isCurrentProfileLoad(profileLoad)) return
+          if (budgetResult?.aborted && transactionResult?.aborted) return
+          showBudgetModal.value = userId === 'user_alex' && !state.budget.configured
+          if (!showBudgetModal.value) {
+            initializeAllowanceAfterProfileLoad(userId)
+            try { await evaluateTodayStreak() } catch (error) { console.error('Initial streak evaluation failed:', error) }
+          }
+          await loadStreakNotifications(userId)
+        })().finally(() => {
+          if (currentProfileLoad === profileLoad) {
+            if (profileLoad.controller.signal.aborted) console.log('[PROFILE LOAD ABORT]', userId, profileLoad.loadId)
+            else console.log('[PROFILE LOAD COMPLETE]', userId, profileLoad.loadId)
+            currentProfileLoad = null
+          }
+        })
+        return profileLoad.promise
+       }
+       async function selectProfile(userId) {
+        const profile = profiles.find(item => item.userId === userId)
+        if (!profile) return
+        if (currentProfileLoad?.userId === profile.userId && !currentProfileLoad.controller.signal.aborted) return currentProfileLoad.promise
        activeUserId.value = profile.userId
        localStorage.setItem(ACTIVE_USER_STORAGE_KEY, profile.userId)
        Object.assign(state, loadState(profile.userId))
@@ -528,15 +578,7 @@ const App = {
        showForm.value = false
        showProfileSelector.value = false
        showBudgetModal.value = profile.fresh && !state.budget.configured
-         await Promise.all([loadBudget(profile.userId), loadTransactions(profile.userId), loadStreaks(profile.userId), loadCommunityPosts(profile.userId), loadRelationships(profile.userId)])
-         if (activeUserId.value === profile.userId) {
-           showBudgetModal.value = profile.fresh && !state.budget.configured
-            if (!showBudgetModal.value) {
-              initializeAllowanceAfterProfileLoad(profile.userId)
-              try { await evaluateTodayStreak() } catch (error) { console.error('Initial streak evaluation failed:', error) }
-            }
-         }
-         await loadStreakNotifications(profile.userId)
+          await loadProfile(profile.userId)
       }
       function openProfileSelector() { showProfileSelector.value = true }
        async function loadStreakNotifications(userId = activeUserId.value) {
@@ -821,16 +863,12 @@ const App = {
           const response = await fetch(`${COMMUNITY_API_URL}/posts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: activeUserId.value, type: 'win', text: safeText }),
+            body: JSON.stringify({ userId: activeUserId.value, type: 'win', text: safeText, ...(achievement?.id ? { sourceAchievementId: achievement.id } : {}) }),
           })
           if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
            const post = await response.json()
            communityPosts.value = [post, ...communityPosts.value.filter(item => item._id !== post._id)]
-           if (achievement?.id) {
-             const decisionResponse = await fetch(`${ACHIEVEMENTS_API_URL}/${achievement.id}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: activeUserId.value, status: 'shared' }) })
-             if (!decisionResponse.ok) throw new Error(`Request failed with status ${decisionResponse.status}`)
-             pendingAchievements.value = pendingAchievements.value.filter(item => item._id !== achievement.id)
-           }
+          if (achievement?.id) pendingAchievements.value = pendingAchievements.value.filter(item => item._id !== achievement.id)
            state.community.shareDecisions[achievement?.key || text] = 'shared'
           state.community.availableWin = ''
           persist()
@@ -909,7 +947,7 @@ const App = {
     function toggleDemoMode() { if (demoMode.value) resetDemoData(); else runScenario1() }
 
     watch(state, persist, { deep: true })
-              onMounted(async () => { if (!activeUserId.value) return; await Promise.all([loadBudget(), loadTransactions(), loadStreaks(), loadCommunityPosts(), loadRelationships()]); showBudgetModal.value = activeUserId.value === 'user_alex' && !state.budget.configured; if (!showBudgetModal.value) { initializeAllowanceAfterProfileLoad(activeUserId.value); try { await evaluateTodayStreak() } catch (error) { console.error('Initial streak evaluation failed:', error) } }; await loadStreakNotifications(activeUserId.value) })
+              onMounted(async () => { if (!activeUserId.value) return; await loadProfile(activeUserId.value) })
               return { state, profiles, activeUserId, activeProfile, showProfileSelector, selectProfile, openProfileSelector, view, wrappedIndex, demoMode, showForm, showBudgetModal, showAddFriend, friendUsername, showDetails, toast, amount, category, description, expenseDate, budgetForm, budgetMetrics, financialStatus, todayOverage, totalSpent, spendableAmount, remainingSpendable, daysRemaining, safeDailySpend, averageDailySpend, projectedSpend, expectedLeftover, overspendAmount, riskStatus, statusClass, percentSpent, recentExpenses, categoryTotals, apiTransactions, apiCategoryTotals, transactionsLoading, transactionsError, expenseSubmitting, expenseError, formattedPeriod, completedWeek, weekTotal, previousWeekTotal, weekComparison, weeklyOnTrackDays, weeklyWrappedAvailable, wrapCards, insightTransactions, insightPeriod, insightsCards, shareableWin, friends, incomingFriendRequests, relationshipData, buddy, buddies, streakRelationships, personalStreak, currentUserStatus, streakData, overviewNotifications, buddyProfileName, buddyProfileId, buddyFriendUsage, nudgeSentToday, communityFeed, allCommunityFeed, communityFeedHasMore, communityFeedExpanded, communityPosts, communityPostsLoading, currentWeekRecords, money, formatDate, saveBudget, editBudget, endDay, addExpense, removeExpense, updateExpense, sendFriendRequest, respondToFriendRequest, toggleCommunityFeed, removeFriend, sendStreakRequest, acceptStreakRequest, acceptFriendDemo, inviteBuddy, acceptBuddyDemo, simulateUserSuccess, simulateFriendApproaching, simulateFriendSuccess, simulateFriendPending, simulateBuddyBreak, nudgeBuddy, simulateBuddyNudge, simulateSavingsWin, simulateStreakWin, simulateImprovedWeek, shareWin, keepPrivate, go, openExpense, nextWrap, previousWrap, toggleDemoMode, loadPresentationDemo, resetDemoData, loadStreakNotifications, categories }
   },
   template: String.raw`

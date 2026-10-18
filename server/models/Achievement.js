@@ -7,7 +7,7 @@ const achievementSchema = new mongoose.Schema({
   type: { type: String, enum: ['personal-streak', 'shared-streak'], required: true },
   buddyUserId: { type: String, default: '' },
   milestone: { type: Number, required: true, min: 1 },
-  status: { type: String, enum: ['pending', 'shared', 'private', 'expired'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'shared', 'private', 'expired', 'revoked'], default: 'pending' },
   earnedDate: { type: String, default: '' },
 }, { timestamps: true })
 

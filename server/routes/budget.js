@@ -1,5 +1,6 @@
 import express from 'express'
 import Budget from '../models/Budget.js'
+import DailyStreakState from '../models/DailyStreakState.js'
 
 const router = express.Router()
 
@@ -56,6 +57,10 @@ router.put('/', async (req, res, next) => {
         $unset: { monthly: 1, savings: 1, start: 1, end: 1 },
       },
       { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+    )
+    await DailyStreakState.updateMany(
+      { userId, dayFinalized: false },
+      { $set: { dailySafeLimit: null } },
     )
     res.json(budgetResponse(budget, userId))
   } catch (error) {
