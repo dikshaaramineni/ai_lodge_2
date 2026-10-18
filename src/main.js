@@ -610,13 +610,15 @@ const App = {
         return profileLoad.promise
        }
        async function selectProfile(userId) {
-        const profile = profiles.find(item => item.userId === userId)
-        if (!profile) return
-        if (currentProfileLoad?.userId === profile.userId && !currentProfileLoad.controller.signal.aborted) return currentProfileLoad.promise
-       activeUserId.value = profile.userId
-       localStorage.setItem(ACTIVE_USER_STORAGE_KEY, profile.userId)
-       Object.assign(state, loadState(profile.userId))
-       Object.assign(budgetForm, state.budget)
+         const profile = profiles.find(item => item.userId === userId)
+         if (!profile) return
+         if (currentProfileLoad?.userId === profile.userId && !currentProfileLoad.controller.signal.aborted) return currentProfileLoad.promise
+        if (activeUserId.value) persist()
+        activeUserId.value = profile.userId
+        localStorage.setItem(ACTIVE_USER_STORAGE_KEY, profile.userId)
+        Object.assign(state, loadState(profile.userId))
+        expenseDate.value = state.progress.allowanceDate || dateInput(new Date())
+        Object.assign(budgetForm, state.budget)
          apiTransactions.value = []
           streakData.value = null
           pendingAchievements.value = []
