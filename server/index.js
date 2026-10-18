@@ -7,6 +7,7 @@ import budgetRoutes from './routes/budget.js'
 import transactionRoutes from './routes/transactions.js'
 import streakRoutes from './routes/streaks.js'
 import communityRoutes from './routes/community.js'
+import SavingsBuddy from './models/SavingsBuddy.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 3000
@@ -55,6 +56,7 @@ app.use((error, req, res, next) => {
 
 try {
   await connectDatabase()
+  await SavingsBuddy.syncIndexes()
   app.listen(PORT, HOST, () => {
     console.log(`CashLing API listening on port ${PORT}`)
   })

@@ -6,6 +6,7 @@ import StreakNotification from '../models/StreakNotification.js'
 import DailyStreakState from '../models/DailyStreakState.js'
 import Transaction from '../models/Transaction.js'
 import Budget from '../models/Budget.js'
+import FriendRequest from '../models/FriendRequest.js'
 
 const router = express.Router()
 
@@ -391,13 +392,31 @@ router.post('/requests', async (req, res, next) => {
     if (!userId) return
     const { buddyUserId } = req.body
     if (!buddyUserId || buddyUserId === userId) return res.status(400).json({ message: 'A different buddy user is required' })
+    const friendship = await FriendRequest.findOne({
+      $or: [
+        { fromUserId: userId, toUserId: buddyUserId, status: 'accepted' },
+        { fromUserId: buddyUserId, toUserId: userId, status: 'accepted' },
+      ],
+    })
+    if (!friendship) return res.status(403).json({ message: 'An accepted friendship is required to start a shared streak' })
     const buddyUser = await User.findOne({ userId: buddyUserId })
     if (!buddyUser) return res.status(404).json({ message: 'Buddy user not found' })
-    const existing = await SavingsBuddy.findOne({ userIds: { $all: [userId, buddyUserId] } })
-    if (existing) return res.status(409).json({ message: 'A shared streak relationship already exists' })
-    const relationship = await SavingsBuddy.create({ userIds: [userId, buddyUserId], sharedStreak: 0, status: 'pending', invitedBy: userId })
+    const user = await User.findOne({ userId })
+    if (!user) return res.status(404).json({ message: 'User not found' })
+    const userIds = [userId, buddyUserId].sort()
+    const existingRelationship = await SavingsBuddy.findOne({ userIds: { $all: userIds, $size: 2 } })
+    console.log('[START SHARED STREAK]', { userIds, existingRelationship })
+    const relationship = existingRelationship || await SavingsBuddy.create({ userIds, sharedStreak: 0, lastCompletedDate: '', dailyCompletions: [], status: 'active', invitedBy: userId })
+    if (existingRelationship && relationship.status !== 'active') {
+      relationship.sharedStreak = 0
+      relationship.lastCompletedDate = ''
+      relationship.dailyCompletions = []
+      relationship.status = 'active'
+      relationship.invitedBy = userId
+      await relationship.save()
+    }
     const relationships = await SavingsBuddy.find({ userIds: userId })
-    res.status(201).json(await relationshipResponse(await User.findOne({ userId }), relationships))
+    res.status(existingRelationship ? 200 : 201).json(await relationshipResponse(user, relationships))
   } catch (error) {
     next(error)
   }

@@ -71,7 +71,8 @@ const App = {
     const demoMode = ref(false)
     const showForm = ref(false)
      const showBudgetModal = ref(activeUserId.value === 'user_alex' && !state.budget.configured)
-    const showAddFriend = ref(false)
+     const showAddFriend = ref(false)
+     const removeFriendTarget = ref(null)
     const showProfileSelector = ref(!activeUserId.value)
     const friendUsername = ref('')
     const showDetails = ref(false)
@@ -940,28 +941,38 @@ const App = {
         }
       }
       function toggleCommunityFeed() { communityFeedExpanded.value = !communityFeedExpanded.value }
-      async function removeFriend(friendUserId, friendName) {
-        if (!window.confirm(`Remove ${friendName} as a friend?`)) return
-        try {
-          const response = await fetch(`${COMMUNITY_API_URL}/friends/${encodeURIComponent(friendUserId)}?userId=${encodeURIComponent(activeUserId.value)}`, { method: 'DELETE' })
-          if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
-          relationshipData.value = await response.json()
-          await Promise.all([loadStreaks(), loadCommunityPosts()])
-          notify(`${friendName} was removed`) 
-        } catch (error) {
-          notify('Unable to remove friend')
-        }
-      }
-      async function sendStreakRequest(friendUserId, friendName) {
-        try {
-          console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
-          const response = await fetch(`${STREAKS_API_URL}/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: activeUserId.value, buddyUserId: friendUserId }) })
+       function removeFriend(friendUserId, friendName) {
+         removeFriendTarget.value = { userId: friendUserId, name: friendName }
+       }
+       async function confirmRemoveFriend() {
+         const target = removeFriendTarget.value
+         if (!target) return
+         try {
+           const response = await fetch(`${COMMUNITY_API_URL}/friends/${encodeURIComponent(target.userId)}?userId=${encodeURIComponent(activeUserId.value)}`, { method: 'DELETE' })
+           if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
+           relationshipData.value = await response.json()
+           await Promise.all([loadStreaks(), loadCommunityPosts(), loadRelationships()])
+           removeFriendTarget.value = null
+           notify(`${target.name} was removed`)
+         } catch (error) {
+           notify('Unable to remove friend')
+         }
+       }
+       async function sendStreakRequest(friendUserId, friendName) {
+         try {
+           console.log('[START SHARED STREAK REQUEST]', {
+             currentUserId: activeUserId.value,
+             friendUserId,
+           })
+           console.log('[STREAK REQUEST ACTIVE DAY]', activeDay.value)
+           const response = await fetch(`${STREAKS_API_URL}/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: activeUserId.value, buddyUserId: friendUserId }) })
           if (!response.ok) {
             const error = await response.json().catch(() => ({}))
             throw new Error(error.message || `Request failed with status ${response.status}`)
           }
-          streakData.value = await response.json()
-          notify(`Shared streak request sent to ${friendName}`)
+           streakData.value = await response.json()
+           await Promise.all([loadStreaks(), loadRelationships()])
+           notify(`Shared streak started with ${friendName}`)
         } catch (error) {
           notify(error.message || 'Unable to send shared streak request')
         }
@@ -1011,7 +1022,7 @@ const App = {
 
     watch(state, persist, { deep: true })
               onMounted(async () => { if (!activeUserId.value) return; await loadProfile(activeUserId.value) })
-              return { state, profiles, activeUserId, activeProfile, showProfileSelector, selectProfile, openProfileSelector, view, wrappedIndex, demoMode, showForm, showBudgetModal, showAddFriend, friendUsername, showDetails, toast, amount, category, description, expenseDate, budgetForm, budgetMetrics, financialStatus, todayOverage, totalSpent, spendableAmount, remainingSpendable, daysRemaining, safeDailySpend, averageDailySpend, projectedSpend, expectedLeftover, overspendAmount, riskStatus, statusClass, percentSpent, recentExpenses, categoryTotals, apiTransactions, apiCategoryTotals, transactionsLoading, transactionsError, expenseSubmitting, expenseError, formattedPeriod, completedWeek, weekTotal, previousWeekTotal, weekComparison, weeklyOnTrackDays, weeklyWrappedAvailable, wrapCards, insightTransactions, insightPeriod, insightsCards, shareableWin, friends, incomingFriendRequests, relationshipData, buddy, buddies, streakRelationships, personalStreak, currentUserStatus, streakData, overviewNotifications, buddyProfileName, buddyProfileId, buddyFriendUsage, nudgeSentToday, communityFeed, allCommunityFeed, communityFeedHasMore, communityFeedExpanded, communityPosts, communityPostsLoading, currentWeekRecords, money, formatDate, saveBudget, editBudget, endDay, addExpense, removeExpense, updateExpense, sendFriendRequest, respondToFriendRequest, toggleCommunityFeed, removeFriend, sendStreakRequest, acceptStreakRequest, acceptFriendDemo, inviteBuddy, acceptBuddyDemo, simulateUserSuccess, simulateFriendApproaching, simulateFriendSuccess, simulateFriendPending, simulateBuddyBreak, nudgeBuddy, simulateBuddyNudge, simulateSavingsWin, simulateStreakWin, simulateImprovedWeek, shareWin, keepPrivate, go, openExpense, nextWrap, previousWrap, toggleDemoMode, loadPresentationDemo, resetDemoData, loadStreakNotifications, categories }
+               return { state, profiles, activeUserId, activeProfile, showProfileSelector, selectProfile, openProfileSelector, view, wrappedIndex, demoMode, showForm, showBudgetModal, showAddFriend, removeFriendTarget, friendUsername, showDetails, toast, amount, category, description, expenseDate, budgetForm, budgetMetrics, financialStatus, todayOverage, totalSpent, spendableAmount, remainingSpendable, daysRemaining, safeDailySpend, averageDailySpend, projectedSpend, expectedLeftover, overspendAmount, riskStatus, statusClass, percentSpent, recentExpenses, categoryTotals, apiTransactions, apiCategoryTotals, transactionsLoading, transactionsError, expenseSubmitting, expenseError, formattedPeriod, completedWeek, weekTotal, previousWeekTotal, weekComparison, weeklyOnTrackDays, weeklyWrappedAvailable, wrapCards, insightTransactions, insightPeriod, insightsCards, shareableWin, friends, incomingFriendRequests, relationshipData, buddy, buddies, streakRelationships, personalStreak, currentUserStatus, streakData, overviewNotifications, buddyProfileName, buddyProfileId, buddyFriendUsage, nudgeSentToday, communityFeed, allCommunityFeed, communityFeedHasMore, communityFeedExpanded, communityPosts, communityPostsLoading, currentWeekRecords, money, formatDate, saveBudget, editBudget, endDay, addExpense, removeExpense, confirmRemoveFriend, updateExpense, sendFriendRequest, respondToFriendRequest, toggleCommunityFeed, removeFriend, sendStreakRequest, acceptStreakRequest, acceptFriendDemo, inviteBuddy, acceptBuddyDemo, simulateUserSuccess, simulateFriendApproaching, simulateFriendSuccess, simulateFriendPending, simulateBuddyBreak, nudgeBuddy, simulateBuddyNudge, simulateSavingsWin, simulateStreakWin, simulateImprovedWeek, shareWin, keepPrivate, go, openExpense, nextWrap, previousWrap, toggleDemoMode, loadPresentationDemo, resetDemoData, loadStreakNotifications, categories }
   },
   template: String.raw`
      <section v-if="!activeUserId || showProfileSelector" class="profile-landing">
@@ -1051,7 +1062,7 @@ const App = {
           <section v-if="view === 'community' && shareableWin" class="share-win-card shareable-achievement-card"><div><p class="overline">A WIN WORTH SHARING</p><strong>{{ shareableWin }}</strong></div><div class="share-win-actions"><button class="submit-button" @click="shareWin(shareableWin)">Share this win</button><button class="keep-private" @click="keepPrivate(shareableWin)">Keep this win private</button></div></section><section v-if="view === 'community' && incomingFriendRequests.length" class="friend-requests-card"><p class="overline">FRIEND REQUESTS</p><div v-for="request in incomingFriendRequests" :key="request.id" class="friend-request-row"><strong>{{ request.name }}</strong><span>@{{ request.username }} wants to connect</span><button class="submit-button" @click="respondToFriendRequest(request.id, 'accept')">Accept</button><button class="keep-private" @click="respondToFriendRequest(request.id, 'decline')">Decline</button></div></section><p v-if="view === 'community'" class="overline streak-section-label">STREAKS</p><section v-if="view === 'community'" class="streak-summary"><div class="stat-card streak-stat-card"><div class="stat-icon streak-icon">🔥</div><span>On-track streak</span><strong>{{ streakData?.currentStreak ?? 0 }} days</strong><small>{{ (streakData?.currentStreak ?? 0) > 0 ? 'Keep within today’s pace to continue it.' : 'Start your streak by staying within today’s pace.' }}</small></div><div v-for="relationship in buddies" :key="relationship.userIds.join('-')" class="stat-card streak-stat-card shared-streak-card"><div class="stat-icon shared-streak-icon">🔥</div><span>Shared streak</span><strong>You + {{ relationship.name }}</strong><small>{{ relationship.sharedStreak }}-day shared streak</small></div></section><section v-if="view === 'community' && (streakData?.buddy || friends.length)" class="connected-friend-card"><div v-if="streakData?.buddy"><div class="community-avatar">{{ buddyProfileName.slice(0, 1) }}</div><div><p class="overline">CONNECTED FRIEND</p><strong>{{ buddyProfileName }}</strong><small>Savings Buddy · connected</small></div></div><div v-for="friend in friends" :key="friend.userId" class="connected-friend-entry"><div class="community-avatar">{{ friend.name.slice(0, 1) }}</div><div><p class="overline">CONNECTED FRIEND</p><strong>{{ friend.name }}</strong><small>@{{ friend.username }} · connected</small></div></div></section></main>
        <div v-if="showAddFriend" class="modal-backdrop"><form class="budget-modal" @submit.prevent="sendFriendRequest"><p class="overline">COMMUNITY</p><h2>Add a friend</h2><p>Enter your friend's username to send an invite.</p><label>Username<input v-model="friendUsername" required placeholder="@chloe123"></label><div class="purchase-actions"><button type="button" class="cancel-button" @click="showAddFriend = false">Cancel</button><button class="submit-button" type="submit">Send request</button></div></form></div><div v-if="showBudgetModal" class="modal-backdrop"><form class="budget-modal" @submit.prevent="saveBudget"><p class="overline">WELCOME TO CASHLING</p><h2>Set your personal plan</h2><p>Every forecast and daily limit starts with your numbers.</p><label>Monthly budget<input v-model.number="budgetForm.monthly" type="number" min="0.01" step="0.01" required></label><label>Monthly savings goal<input v-model.number="budgetForm.savings" type="number" min="0" step="0.01" required></label><div class="date-fields"><label>Start date<input v-model="budgetForm.start" type="date" required></label><label>End date<input v-model="budgetForm.end" type="date" required></label></div><button class="submit-button" type="submit">Save my budget <span>→</span></button></form></div>
         <section v-if="view === 'community'" class="community-actions"><button v-if="communityFeedHasMore" class="text-button" @click="toggleCommunityFeed">{{ communityFeedExpanded ? 'Show less' : 'View more' }} shared wins</button><button v-if="streakData?.buddy?.status === 'pending' && streakData.buddy.invitedBy !== activeUserId" class="submit-button" @click="acceptStreakRequest">Accept shared streak request</button><template v-for="friend in friends" :key="'streak-' + friend.userId"><button v-if="!streakData?.buddy" class="submit-button" @click="sendStreakRequest(friend.userId, friend.name)">Start shared streak with {{ friend.name }}</button></template><button v-if="streakData?.buddy" class="keep-private" @click="removeFriend(buddyProfileId, buddyProfileName)">Remove {{ buddyProfileName }} as a friend</button><template v-for="friend in friends" :key="'remove-' + friend.userId"><button class="keep-private" @click="removeFriend(friend.userId, friend.name)">Remove {{ friend.name }} as a friend</button></template></section>
-      </div>`
+       <div v-if="removeFriendTarget" class="modal-backdrop"><form class="budget-modal" @submit.prevent="confirmRemoveFriend"><p class="overline">COMMUNITY</p><h2>Remove {{ removeFriendTarget.name }} as a friend?</h2><p>You’ll no longer see each other’s Shared Wins, and any active shared streak between you will end.</p><div class="purchase-actions"><button type="button" class="cancel-button" @click="removeFriendTarget = null">Cancel</button><button class="submit-button" type="submit">Remove friend</button></div></form></div></div>`
 }
 
 createApp(App).mount('#app')
